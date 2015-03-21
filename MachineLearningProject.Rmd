@@ -1,0 +1,127 @@
+---
+title: "Machine Learning Project"
+author: "Roger Oglesby"
+date: "Friday, March 20, 2015"
+output: html_document
+---
+###Introduction
+This project will investigate how well a group of enthusiasts perform barbell lifts.
+Using data from personal activity trackers, a machine learning model will predict how well 
+the activity was performed. Data from control activities will be used to train the model which
+will them be used to predict activity from 20 test results.
+
+Data for this experiment comes from http://groupware.les.inf.puc-rio.br/har and thank you to
+them for allowing this data to be used.
+```{r}
+#  Load the packages necessary for the analysis
+library(lattice); library(ggplot2); library(caret); library(randomForest)
+#  and read in the data to be analysed
+test <- "./Machine Learning/pml-testing.csv"
+testpml <- read.table(test,sep=",", as.is=T, header=T)
+train <- "./Machine Learning/pml-training.csv"
+trainingpml <- read.table(train, sep="," , as.is=T, header=T)
+```
+The training data (trainingpml) will be used to build and test a model to predict the outcome from
+the test data (testpml).
+To allow cross validation and probability testing of the model, the training data will first 
+be sub-divided into training and validation subsets. Due to size and power of my PC, 
+a smaller than usual proportion of data will be used for training data allowing more 
+data to be used in the validation step. 
+This might hinder the final model, but it will mean the code to build the model 
+will run in a reasonable time scale on my not highest spec machine.
+Only 40% of data will be used for training, 60% for validation.   
+  
+###Data Cleaning   
+```{r}
+#  Set the seed so the that the approach is reproducible
+set.seed <- 1234
+#  Subset the full training data frame into a smaller training set with the rest in a validation set
+trainIndex <- createDataPartition(trainingpml$classe,p=0.4,list=FALSE)
+#  40% of data will be written to training set trainpml and 60% to validation set validpml
+trainpml <- trainingpml[trainIndex,]
+```
+Before modelling, the data will be cleaned.
+Data which will not contribute to the analysis will be removed - firstly names and timestamps.
+```{r}
+#  Remove data not to be used from training and validation data frame - names and timestamps.
+trainpml <- trainpml[, -c(1,3,4,5,6,7)]
+```
+From a cursory look at the data, it is obvious that a lot of readings have missing data. 
+If any variable has more than 50% missing data, this data will be removed and will not be used in the model.
+```{r}
+#  Only keep data if more than half of it is not NA
+trainmiss <- colSums(is.na(trainpml)) < (nrow(trainpml)/2)
+#  Remove data which will not contribute to the model
+trainpml <- trainpml[, trainmiss]
+#  Remove data if it is nearly constant and not very useful for prediction
+trainnzr <- nearZeroVar(trainpml, saveMetrics=TRUE)
+trainpml <- trainpml[, which(trainnzr$nzv==FALSE)]
+#  Convert the user names and exercise class type into factor variables for the model
+trainpml$user_name  <- as.factor(trainpml$user_name)
+trainpml$classe  <- as.factor(trainpml$classe)
+#  The clean training data will now be used to build the model  
+```
+Now we have clean data, we will build our first model using the caret package and a random forest model.
+To allow the models to process in a reasonable time, the number of trees has been limited to 100.
+Four models will be tested using various numbers of trees. The best model will be decided by
+predicting using the validation data set.
+```{r}
+modelFit0 <- train(trainpml$classe ~., method="rf", data=trainpml, ntree=5, importance=TRUE)
+modelFit1 <- train(trainpml$classe ~., method="rf", data=trainpml, ntree=10, importance=TRUE)
+modelFit2 <- train(trainpml$classe ~., method="rf", data=trainpml, ntree=50, importance=TRUE)
+modelFit3 <- train(trainpml$classe ~., method="rf", data=trainpml, ntree=100, importance=TRUE)
+```
+The confusion matrix shows that all models are reasonably accurate with prediction, 
+with the best model being the 100 tree model.
+```{r,echo=FALSE}
+#  Generate the confusion matrix to calculate the accuracy of the four models against the validation data
+CM0 <- confusionMatrix(validpml$classe, predict(modelFit0,validpml))
+CM1 <- confusionMatrix(validpml$classe, predict(modelFit1, validpml))
+CM2 <- confusionMatrix(validpml$classe, predict(modelFit2, validpml))
+CM3 <- confusionMatrix(validpml$classe, predict(modelFit3, validpml))
+#  Print out the accuracy of the four models
+print("Accuracy of Model 0 -   5 trees"); CM0$overall[1]
+print("Accuracy of Model 1 -  10 trees"); CM1$overall[1]
+print("Accuracy of Model 2 -  50 trees"); CM2$overall[1]
+print("Accuracy of Model 3 - 100 trees"); CM3$overall[1]
+#  What about the sensitivity and specificity of the best model?
+print("Model 2 -  50 trees")
+CM3$byClass[,c(1,2)]
+```
+The best 100 tree model gives an accuracy of over 99.1%, outperforming the other models.
+This model will be used for the final prediction of 20 test cases.  
+    
+The sensitivity and specificity for all five outcomes (A, B, C D and E) are also all better than 98.0%
+indicating that the model should correctly predict at least 19 out of 20 test cases    
+   
+####Predictions   
+Although only Model 3 (100 trees) will be used for the final predictions, how
+would the different models changethe predictions?
+```{r,ECHO=FALSE}
+testpml$predict0 <- predict(modelFit0, testpml)
+testpml$predict1 <- predict(modelFit1, testpml)
+testpml$predict2 <- predict(modelFit2, testpml)
+testpml$predict3 <- predict(modelFit3, testpml)
+#  This gives the predictions as ....
+print("Model 0 -   5 trees"); testpml$predict0
+print("Model 1 -  10 trees"); testpml$predict1
+print("Model 2 -  50 trees"); testpml$predict2
+print("Model 3 - 100 trees"); testpml$predict3
+```
+The different models agree on all predictions!  
+    
+###Conclusions   
+The predictions from Model 2 with 50 trees will be used for the final assessment submission. 
+An amended submission routine will be used to write the predictions to 20 files.
+```{r}
+#  The predictions to be submitted are:
+print(testpml$predict3)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_", i, ".txt")
+    write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, col.names=FALSE)
+  }
+}
+pml_write_files(testpml$predict3)
+```
